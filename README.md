@@ -2,48 +2,79 @@
 
 **Live: https://obatron.github.io/RoadTripplanner/**
 
-A single-file, dependency-light road-trip planner. Plan a drive between any two
-places, add overnight stops, work the schedule backwards from a ferry sailing,
-and see the whole thing as a calendar, a route list and a budget.
+Plot a road trip, budget it, and keep changing it as the plan moves. Distances and
+drive times are looked up live from real road data; the budget works the way the
+spreadsheet templates do — planned against actual, by category — and everything you
+type is saved as you type it.
 
 ## What it does
 
-- **Nothing is hardcoded.** Places are geocoded with
-  [Nominatim](https://nominatim.org/) and roads routed with
-  [OSRM](https://project-osrm.org/), both OpenStreetMap projects — so any town
-  anywhere works.
-- **The schedule is derived, not typed.** Give it a sailing date and time and it
-  works backwards through the check-in window and the drive to tell you when to
-  set off. Change where you live and the departure time changes with it.
-- **Two layers per day.** Driving and crossings are timed events inside a day;
-  where you sleep is a separate band that spans days and overlaps the driving —
-  the way a real calendar behaves.
-- **Honest about gaps.** If a lookup fails you get a box to type the distance,
-  never an invented number. Unpriced stops are excluded from the total and
-  counted, rather than guessed.
+**Route.** Type any two places and it geocodes them with
+[Nominatim](https://nominatim.org/) and routes the roads with
+[OSRM](https://project-osrm.org/) — so any town anywhere works and nothing is built
+in. Add stops, **reorder them with the arrows**, or **click the map** to drop a stop
+where you clicked. Each leg shows its km, its drive time and what the fuel costs.
+Reordering re-routes immediately, so you can see a better order pay for itself.
+
+**Crossings.** Optional ferry on any route. Give it a sailing date and time and it
+works backwards through the check-in window and the drive to the terminal to tell you
+what time to leave the house.
+
+**Itinerary.** Every day of the trip laid out, with the driving and crossings filled
+in automatically and room to add your own items — a time, a title, a category and a
+cost. Same days as a month calendar if you prefer that shape, where the driving sits
+inside the day and the hotel band spans the nights.
+
+**Budget.** Planned | Actual | Difference across seven categories. Lodging, fuel and
+ferry are derived — lodging from nights × rates, fuel from **your car's L/100 km × your
+$/litre × the real routed distance** — and everything else is a line you add. Set a
+contingency %, and see the total per traveller and per day. The difference only ever
+compares the lines you've actually filled in, so it never claims you're under budget
+because you haven't entered receipts yet.
+
+**Plots.** Where the money goes (planned against actual, by category), spend per day,
+and the running total across the trip. Each chart has a table view, so no number is
+reachable only by hovering.
+
+**Saving.** Every change is written to your browser's local storage immediately —
+closing the tab is safe. Keep several trips side by side, duplicate one to try a
+variation, export a `.json` backup, export the budget as `.csv`, copy a shareable
+link that carries the whole trip, or print to PDF. Nothing is uploaded anywhere.
+
+**Honest about gaps.** If a route lookup fails you get a box to type the distance,
+never an invented number. Stops with no nightly rate are counted and flagged, not
+guessed. Fuel prices, hotel rates and ferry fares are asked for rather than made up.
 
 ## Running it
-
-It's one file. Open `index.html`, or serve the folder:
 
 ```bash
 python3 -m http.server 8000
 ```
 
+Then open `http://localhost:8000`. Opening `index.html` straight off disk mostly
+works, but a real HTTP origin is what the map tiles and lookups expect.
+
 ## Publishing
 
-This repo is already published to GitHub Pages from `main` / root, so pushing to
-`main` redeploys the live site:
+This repo is published to GitHub Pages from `main` / root, so pushing redeploys it:
 
 ```bash
 git add -A && git commit -m "Update planner" && git push
 ```
 
-Pages serves over HTTPS from a real origin, so the map tiles and the geocoding
-and routing calls all work — which they may not when the same file is opened
-from `file://` or embedded in a sandboxed frame.
+## Files
+
+| File | |
+|---|---|
+| `index.html` | markup |
+| `styles.css` | design tokens and layout |
+| `app.js` | state, lookups, schedule, budget maths, charts |
+| `RESEARCH.md` | notes on Wanderlog / Roadtrippers / Sheets templates, and the gap analysis behind this version |
+
+Chart colours are the validated categorical slots (blue / orange), checked for
+colour-blind separation and contrast in both light and dark mode.
 
 ## Credits
 
-Map tiles and geocoding © OpenStreetMap contributors. Routing by OSRM.
-Map rendering by [Leaflet](https://leafletjs.com/).
+Map tiles and geocoding © OpenStreetMap contributors. Routing by
+[OSRM](https://project-osrm.org/). Map rendering by [Leaflet](https://leafletjs.com/).

@@ -4,685 +4,233 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trip planner</title>
+<meta name="description" content="Plot a road trip, budget it, and change it as you go — routes and distances looked up live, planned vs actual by category, autosaved.">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<style>
-  :root{
-    --bg:#f7f7f5; --card:#fff; --ink:#0b0b0b; --ink2:#52514e; --ink3:#8a8880;
-    --line:#e6e5df; --edge:rgba(11,11,11,.09);
-    --drive:#eb6834; --ferry:#2a78d6; --stay:#eda100; --free:#1baf7a; --ok:#0d7a3d; --miss:#d03b3b;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{--bg:#0d0d0d;--card:#191918;--ink:#fff;--ink2:#c3c2b7;--ink3:#8a8880;
-      --line:#2b2b29;--edge:rgba(255,255,255,.09);
-      --drive:#d95926;--ferry:#3987e5;--stay:#c98500;--free:#199e70;--ok:#0ca30c;--miss:#e66767;}
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
-  .wrap{max-width:980px;margin:0 auto;padding:26px 20px 70px}
-  h1{font-size:20px;margin:0 0 4px}
-  .sub{font-size:13px;color:var(--ink2);margin:0 0 16px}
-  .card{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:18px;margin-bottom:14px}
-  h2{font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:0 0 13px}
-  .fl{display:block;font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
-  input,select{font-family:inherit;font-size:13px;padding:7px 9px;width:100%;
-    border:1px solid var(--edge);border-radius:8px;background:var(--card);color:var(--ink)}
-  .grid{display:grid;gap:12px}
-  .g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)}
-  .seg{display:flex;gap:5px}
-  .seg button{flex:1;font-family:inherit;font-size:12px;font-weight:600;padding:8px 5px;cursor:pointer;
-    border:1px solid var(--edge);border-radius:8px;background:var(--card);color:var(--ink2);line-height:1.3}
-  .seg button small{display:block;font-size:9.5px;font-weight:500;color:var(--ink3);margin-top:1px}
-  .seg button.on{background:var(--ink);border-color:var(--ink);color:var(--bg)}
-  .btn{font-family:inherit;font-size:12px;padding:7px 11px;cursor:pointer;border:1px solid var(--edge);
-    border-radius:8px;background:var(--card);color:var(--ink2)}
-  .btn:hover{border-color:var(--ink3);color:var(--ink)}
-  .net{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;
-    padding:3px 9px;border-radius:999px;border:1px solid var(--edge);color:var(--ink2)}
-  .net i{width:7px;height:7px;border-radius:50%;background:var(--ink3)}
-  .net.on i{background:var(--ok)} .net.off i{background:var(--miss)}
-
-  /* map + steps */
-  .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  #map{height:460px;border-radius:12px;border:1px solid var(--edge);background:var(--bg);z-index:0}
-  #mapmsg{display:none;padding:12px;font-size:12.5px;color:var(--ink2);text-align:center}
-  #schematic{display:none}
-  #diag{font-size:10.5px;color:var(--ink3);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap}
-  #diag span{display:inline-flex;align-items:center;gap:5px}
-  #diag i{width:7px;height:7px;border-radius:50%;background:var(--ink3)}
-  #diag i.y{background:var(--ok)} #diag i.n{background:var(--miss)}
-  .schem{border:1px solid var(--edge);border-radius:12px;background:var(--bg);padding:16px 14px}
-  .schem-t{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px}
-  .sline{position:relative;margin:0 10px}
-  .srow{display:flex;align-items:center;gap:10px;padding:5px 0}
-  .sdot{flex:0 0 22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-    font-size:10px;font-weight:800;color:#fff;background:var(--ink)}
-  .sdot.a{background:var(--free)} .sdot.b{background:var(--stay);color:#3d2f00}
-  .sdot.f{background:var(--ferry)} .sdot.s{background:var(--drive)}
-  .sname{font-size:12.5px;font-weight:650;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .sbar{margin-left:10px;border-left:3px solid var(--drive);padding:0 0 0 12px;font-size:10.5px;color:var(--ink3)}
-  .sbar.sea{border-left-color:var(--ferry);border-left-style:dashed}
-  .steps{max-height:460px;overflow-y:auto;padding-right:4px}
-  .step{display:grid;grid-template-columns:26px 1fr 62px 70px 20px;gap:8px;align-items:center;
-    padding:7px 0;border-bottom:1px solid var(--line)}
-  .step:last-child{border-bottom:none}
-  .pin{height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-    font-size:11px;font-weight:800;color:#fff;background:var(--ink)}
-  .pin.a{background:var(--free)} .pin.b{background:var(--stay);color:#3d2f00}
-  .pin.f{background:var(--ferry)} .pin.s{background:var(--drive)}
-  .step .nm{font-size:13px;font-weight:600;min-width:0}
-  .step input{padding:6px 7px;font-size:12.5px}
-  .del{background:none;border:none;color:var(--ink3);cursor:pointer;font-size:15px;padding:2px}
-  .del:hover{color:var(--miss)}
-  .leg{display:flex;gap:12px;align-items:center;margin:0 0 0 12px;padding:4px 0 4px 15px;
-    font-size:11px;color:var(--ink3);border-left:2px dotted var(--edge)}
-  .leg b{color:var(--ink2);font-weight:700}
-  .leg .pend{font-style:italic}
-  .leg .fail{color:var(--miss);font-weight:600}
-  .leg input{width:70px;padding:2px 5px;font-size:11px;display:inline-block}
-  .fixedrow{font-size:11px;color:var(--ink3);padding:2px 0 6px 12px}
-
-  .stats{display:flex;flex-wrap:wrap;border:1px solid var(--edge);border-radius:12px;overflow:hidden;
-    background:var(--card);margin-bottom:14px}
-  .stat{flex:1 1 112px;padding:12px 15px;border-right:1px solid var(--edge)}
-  .stat:last-child{border-right:none}
-  .stat .k{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3)}
-  .stat .v{font-size:19px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums}
-
-  .warn{font-size:12px;color:var(--miss);font-weight:600;margin:12px 0 0;padding:10px 12px;border-radius:9px;
-    background:color-mix(in srgb,var(--miss) 7%,var(--card));border:1px solid color-mix(in srgb,var(--miss) 30%,var(--edge))}
-  .okline{font-size:12px;color:var(--ink2);margin:12px 0 0;padding:10px 12px;border-radius:9px;
-    background:var(--bg);border:1px solid var(--edge)}
-  .okline b{color:var(--ink)}
-  .derived{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:10px;margin-top:14px}
-  .dv{border:1px solid var(--edge);border-left:3px solid var(--drive);border-radius:10px;padding:11px 13px;background:var(--bg)}
-  .dv.f{border-left-color:var(--ferry)}
-  .dv .k{font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3)}
-  .dv .v{font-size:15px;font-weight:700;margin-top:3px}
-  .dv .s{font-size:11.5px;color:var(--ink2);margin-top:2px}
-
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  td{padding:7px 0;border-bottom:1px solid var(--line)}
-  td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-  tr:last-child td{border-bottom:none}
-  tr.tot td{border-top:2px solid var(--ink);border-bottom:none;padding-top:10px;font-weight:800;font-size:15px}
-  .q{color:var(--miss);font-weight:700}
-  .src{font-size:11px;color:var(--ink3);line-height:1.7;margin:0}
-  .src b{color:var(--ink2)}
-  /* calendar: two layers per day */
-  .striplegend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink2)}
-  .striplegend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
-  .mname{font-size:12.5px;font-weight:700;margin:0 0 7px}
-  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:0;border:1px solid var(--edge);
-    border-radius:10px;overflow:hidden;margin-bottom:14px}
-  .dow{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);
-    text-align:center;padding:6px 0;background:var(--bg);border-bottom:1px solid var(--edge)}
-  .cd{min-height:76px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
-    padding:4px 0 5px;display:flex;flex-direction:column;background:var(--card)}
-  .cd.out{background:var(--bg)}
-  .cd .num{font-size:11px;font-weight:700;color:var(--ink3);padding:0 6px;text-align:right}
-  .cd.act .num{color:var(--ink)}
-  .cev{font-size:8.5px;font-weight:700;line-height:1.3;margin:2px 4px 0;padding:2px 5px;
-    border-radius:4px;color:#fff;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-  .cev.drive{background:var(--drive)} .cev.ferry{background:var(--ferry)}
-  .cev .tm{opacity:.85;font-weight:600}
-  .band{font-size:8.5px;font-weight:700;line-height:1.35;margin-top:auto;padding:3px 5px;
-    color:#3d2f00;background:var(--stay);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .band.mine{background:var(--free);color:#fff}
-  .band.start{margin-left:4px;border-radius:4px 0 0 4px}
-  .band.end{margin-right:4px;border-radius:0 4px 4px 0}
-  .band.solo{margin:auto 4px 0;border-radius:4px}
-  .band.mid{border-radius:0}
-  .band.cont{color:transparent}
-
-  .marker{background:var(--ink);color:#fff;border-radius:50%;width:24px;height:24px;
-    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;
-    box-shadow:0 1px 4px rgba(0,0,0,.4)}
-  .marker.a{background:#1baf7a} .marker.b{background:#eda100;color:#3d2f00}
-  .marker.f{background:#2a78d6} .marker.s{background:#eb6834}
-  @media(max-width:820px){ .split{grid-template-columns:1fr} #map{height:320px} .steps{max-height:none} }
-  @media(max-width:700px){ .g4,.g3{grid-template-columns:1fr 1fr} }
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-palette="#2a78d6,#eb6834">
+
+<div class="top">
+  <div class="row">
+    <span class="brand">Trip planner</span>
+    <input id="tripname" type="text" aria-label="Trip name" placeholder="Trip name">
+    <select id="tripsel" aria-label="Switch trip" style="width:auto;max-width:190px;font-size:12px"></select>
+    <button class="btn sm" id="newtrip">New</button>
+    <button class="btn sm" id="duptrip">Duplicate</button>
+    <button class="btn sm" id="deltrip">Delete</button>
+    <span class="spacer"></span>
+    <span class="saved" id="saved"><i></i><span id="savedlab">saved</span></span>
+    <span class="net" id="net"><i></i><span id="netlabel">checking…</span></span>
+  </div>
+</div>
+
 <div class="wrap">
-
-  <h1>Trip planner</h1>
-  <p class="sub">Type any places. Distances, drive times and the map are looked up live — nothing is built in.
-    <span class="net" id="net"><i></i><span id="netlabel">checking…</span></span></p>
-
-  <div class="card">
-    <h2>1 · Start and end — the guidelines</h2>
-    <div class="grid g4">
-      <div><label class="fl">Start from</label><input id="home" type="text" value="Portugal Cove-St. Philip's, NL"></div>
-      <div><label class="fl">Trip starts</label><input id="tstart" type="date" value="2026-09-08"></div>
-      <div><label class="fl">Destination</label><input id="dest" type="text" value="Montreal, QC"></div>
-      <div><label class="fl">Trip ends</label><input id="tend" type="date" value="2026-09-26"></div>
-    </div>
-    <div class="grid g4" style="margin-top:12px">
-      <div><label class="fl">Trip type</label>
-        <div class="seg" id="ttype"><button data-t="return" class="on">Return</button><button data-t="oneway">One way</button></div></div>
-      <div><label class="fl">Nights at destination</label><input id="destn" type="number" value="8" min="0" max="120"></div>
-      <div><label class="fl">Most you'll drive a day (hrs)</label><input id="maxh" type="number" value="8" min="3" max="14" step="0.5"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>2 · Crossing <span style="font-weight:600;text-transform:none;letter-spacing:0">— optional, any ferry</span></h2>
-    <div class="grid g4">
-      <div><label class="fl">Board at</label><input id="portA" type="text" value="Port aux Basques, NL"></div>
-      <div><label class="fl">Arrive at</label><input id="portB" type="text" value="North Sydney, NS"></div>
-      <div><label class="fl">Crossing (hrs)</label><input id="seah" type="number" value="7" min="0" max="48" step="0.25"></div>
-      <div><label class="fl">Check in before (hrs)</label><input id="ci" type="number" value="2" min="0" max="6" step="0.25"></div>
-    </div>
-    <div class="grid g3" style="margin-top:12px">
-      <div><label class="fl">Sailing date</label><input id="outdate" type="date" value="2026-09-09"></div>
-      <div><label class="fl">Sails at</label><input id="outtime" type="time" value="02:45"></div>
-      <div><label class="fl">Presets</label>
-        <div class="seg" id="presets">
-          <button data-p="pab" class="on">Port aux Basques<small>7h</small></button>
-          <button data-p="arg">Argentia<small>16h30</small></button>
-          <button data-p="none">No ferry<small>drive only</small></button>
-        </div></div>
-    </div>
-    <div class="grid g3" style="margin-top:12px" id="retblock">
-      <div><label class="fl">Return sailing date</label><input id="retdate" type="date" value="2026-09-25"></div>
-      <div><label class="fl">Sails at</label><input id="rettime" type="time" value="14:30"></div>
-      <div><label class="fl">Return crossing (hrs)</label><input id="seahB" type="number" value="7" min="0" max="48" step="0.25"></div>
-    </div>
-    <div class="derived" id="derived"></div>
-    <div id="checks"></div>
-  </div>
 
   <div class="stats" id="stats"></div>
 
-  <div class="card">
-    <h2>3 · Where you stop, and for how long</h2>
-    <div class="split">
-      <div><div id="map"></div><div id="schematic"></div><div id="mapmsg"></div><div id="diag"></div></div>
-      <div>
-        <div class="steps" id="steps"></div>
-        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-          <button class="btn" id="addOut">+ Stop on the way there</button>
-          <button class="btn" id="addBack">+ Stop coming back</button>
+  <div class="tabs" role="tablist">
+    <button data-tab="route" class="on" role="tab">Route &amp; stops</button>
+    <button data-tab="itin" role="tab">Itinerary</button>
+    <button data-tab="budget" role="tab">Budget &amp; plots</button>
+    <button data-tab="data" role="tab">Save / share</button>
+  </div>
+
+  <!-- ============================ ROUTE ============================ -->
+  <section class="pane on" id="pane-route">
+
+    <div class="card">
+      <h2>The shape of the trip</h2>
+      <div class="grid g4">
+        <div><label class="fl" for="home">Start / end at</label><input id="home" type="text"></div>
+        <div><label class="fl" for="tstart">Trip starts</label><input id="tstart" type="date"></div>
+        <div><label class="fl" for="dest">Destination</label><input id="dest" type="text"></div>
+        <div><label class="fl" for="tend">Trip ends</label><input id="tend" type="date"></div>
+      </div>
+      <div class="grid g4" style="margin-top:12px">
+        <div><label class="fl">Trip type</label>
+          <div class="seg" id="ttype">
+            <button data-t="return" type="button">Return</button>
+            <button data-t="oneway" type="button">One way</button>
+          </div></div>
+        <div><label class="fl" for="destn">Nights at destination</label>
+          <input id="destn" type="number" min="0" max="120"></div>
+        <div><label class="fl" for="destrate">Destination $/night</label>
+          <input id="destrate" type="number" min="0" step="10"></div>
+        <div><label class="fl" for="maxh">Most you'll drive a day (hrs)</label>
+          <input id="maxh" type="number" min="3" max="14" step="0.5"></div>
+      </div>
+      <div class="grid g4" style="margin-top:12px">
+        <div><label class="fl" for="travellers">Travellers</label>
+          <input id="travellers" type="number" min="1" max="20"></div>
+        <div><label class="fl" for="currency">Currency symbol</label>
+          <input id="currency" type="text" maxlength="4"></div>
+        <div><label class="fl" for="l100">Vehicle — L / 100 km</label>
+          <input id="l100" type="number" min="0" step="0.1" placeholder="9.5"></div>
+        <div><label class="fl" for="fuelprice">Fuel — $ / litre</label>
+          <input id="fuelprice" type="number" min="0" step="0.01" placeholder="1.75"></div>
+      </div>
+      <div id="checks"></div>
+    </div>
+
+    <div class="card">
+      <h2>Crossing <span class="soft">— optional, any ferry</span></h2>
+      <div class="grid g4">
+        <div><label class="fl" for="portA">Board at</label><input id="portA" type="text"></div>
+        <div><label class="fl" for="portB">Arrive at</label><input id="portB" type="text"></div>
+        <div><label class="fl" for="seah">Crossing (hrs)</label>
+          <input id="seah" type="number" min="0" max="48" step="0.25"></div>
+        <div><label class="fl" for="ci">Check in before (hrs)</label>
+          <input id="ci" type="number" min="0" max="6" step="0.25"></div>
+      </div>
+      <div class="grid g3" style="margin-top:12px">
+        <div><label class="fl" for="outdate">Sailing date</label><input id="outdate" type="date"></div>
+        <div><label class="fl" for="outtime">Sails at</label><input id="outtime" type="time"></div>
+        <div><label class="fl">Presets</label>
+          <div class="seg" id="presets">
+            <button data-p="pab" type="button">Port aux Basques<small>7h</small></button>
+            <button data-p="arg" type="button">Argentia<small>16h30</small></button>
+            <button data-p="none" type="button">No ferry<small>drive only</small></button>
+          </div></div>
+      </div>
+      <div class="grid g4" style="margin-top:12px" id="retblock">
+        <div><label class="fl" for="retdate">Return sailing date</label><input id="retdate" type="date"></div>
+        <div><label class="fl" for="rettime">Sails at</label><input id="rettime" type="time"></div>
+        <div><label class="fl" for="seahB">Return crossing (hrs)</label>
+          <input id="seahB" type="number" min="0" max="48" step="0.25"></div>
+        <div><label class="fl" for="ferrycost">Ferry — total $</label>
+          <input id="ferrycost" type="number" min="0" step="25"></div>
+      </div>
+      <div class="derived" id="derived"></div>
+    </div>
+
+    <div class="card">
+      <h2>Where you stop <span class="soft">— drag order with the arrows, or click the map to add</span></h2>
+      <div class="split">
+        <div>
+          <div id="map"></div><div id="schematic"></div><div id="mapmsg"></div><div id="diag"></div>
+        </div>
+        <div>
+          <div class="stopwrap" id="steps"></div>
+          <div class="rowbar">
+            <button class="btn" id="addOut">+ Stop on the way there</button>
+            <button class="btn" id="addBack">+ Stop coming back</button>
+          </div>
+          <p class="hint" id="maphint">Click anywhere on the map to add a stop there — it names itself from
+            the nearest place.</p>
         </div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>Calendar — driving sits in the day, the hotel band covers the night</h2>
-    <div id="cal"></div>
-    <div class="striplegend" style="margin-top:12px">
-      <span><i style="background:var(--drive)"></i>Driving / timed event</span>
-      <span><i style="background:var(--ferry)"></i>Crossing</span>
-      <span><i style="background:var(--stay)"></i>Night at destination</span>
-      <span><i style="background:var(--free)"></i>Night at a stop</span>
+  <!-- ============================ ITINERARY ============================ -->
+  <section class="pane" id="pane-itin">
+    <div class="card">
+      <h2>Day by day <span class="soft">— add anything with a time, a cost and a note</span></h2>
+      <div class="rowbar" style="margin:0 0 14px">
+        <div class="seg" id="itview" style="max-width:280px">
+          <button data-v="days" type="button">Day list</button>
+          <button data-v="cal" type="button">Calendar</button>
+        </div>
+      </div>
+      <div id="days"></div>
+      <div id="cal"></div>
+      <div class="striplegend" style="margin-top:12px">
+        <span><i style="background:var(--drive)"></i>Driving</span>
+        <span><i style="background:var(--ferry)"></i>Crossing</span>
+        <span><i style="background:var(--free)"></i>Your own item / night at a stop</span>
+        <span><i style="background:var(--stay)"></i>Night at destination</span>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>Budget</h2>
-    <div class="grid g3" style="margin-bottom:14px">
-      <div><label class="fl">Ferry — total</label><input id="ferrycost" type="number" value="550" step="25"></div>
-      <div><label class="fl">Destination $/night</label><input id="destrate" type="number" value="250" step="10"></div>
-      <div><label class="fl">Fuel $ per 100 km</label><input id="fuel100" type="number" value="" step="1" placeholder="—"></div>
+  <!-- ============================ BUDGET ============================ -->
+  <section class="pane" id="pane-budget">
+
+    <div class="card">
+      <h2>Planned against actual</h2>
+      <table class="bt" id="budget">
+        <thead><tr>
+          <th>Line</th><th class="r">Planned</th><th class="r">Actual</th><th class="r">Difference</th><th></th>
+        </tr></thead>
+        <tbody id="budgetbody"></tbody>
+      </table>
+      <div class="rowbar">
+        <button class="btn" id="addline">+ Budget line</button>
+        <label class="fl" style="margin:0 0 0 6px">Contingency %</label>
+        <input id="conting" type="number" min="0" max="50" step="1" style="width:70px">
+        <span class="hint" style="margin:0">Templates suggest 10–15 % for the unexpected.</span>
+      </div>
+      <p class="okline" id="bnote"></p>
     </div>
-    <table id="budget"></table><p class="okline" id="bnote"></p>
-  </div>
 
-  <div class="card">
-    <h2>Where the numbers come from</h2>
-    <p class="src">Places are geocoded with <b>Nominatim</b> and roads routed with <b>OSRM</b>, both OpenStreetMap projects — so any town works and nothing is hardcoded. The map draws the real road geometry it returns. If a lookup fails you get a box to type the distance rather than a made-up number.<br>
-    Crossing time, check-in window, nightly rates and fuel are yours to set. <b>Not researched:</b> hotel rates and fuel price.</p>
-  </div>
+    <div class="charts">
+      <div class="chart">
+        <p class="ct">Where the money goes</p>
+        <p class="cs" id="c1sub">Planned against actual, by category</p>
+        <div class="legend">
+          <span><i style="background:var(--series-1)"></i>Planned</span>
+          <span><i style="background:var(--series-2)"></i>Actual</span>
+        </div>
+        <div id="chart1"></div>
+      </div>
+      <div class="chart">
+        <p class="ct">Spend per day</p>
+        <p class="cs">Planned, spread across the days it falls on</p>
+        <div id="chart2"></div>
+      </div>
+    </div>
+
+    <div class="chart" style="margin-top:14px">
+      <p class="ct">Running total</p>
+      <p class="cs">Cumulative planned spend across the trip</p>
+      <div id="chart3"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Where the numbers come from</h2>
+      <p class="src">Places are geocoded with <b>Nominatim</b> and roads routed with <b>OSRM</b>, both
+        OpenStreetMap projects — so any town works and nothing is hardcoded. Fuel is
+        <b>your car's L/100 km × your $/litre × the real routed distance</b>. Lodging is your nightly
+        rates × nights. Everything else is a line you enter.<br>
+        <b>Not looked up:</b> fuel prices, hotel rates and ferry fares — this page asks you for them
+        rather than inventing them. Unpriced stops are counted, not guessed.</p>
+    </div>
+  </section>
+
+  <!-- ============================ DATA ============================ -->
+  <section class="pane" id="pane-data">
+    <div class="card">
+      <h2>This trip is saved in your browser</h2>
+      <p class="hint" style="margin:0 0 14px">Every change is written to this browser's local storage
+        straight away — closing the tab is safe. Nothing is uploaded anywhere. To move a trip to
+        another device or keep a backup, export it.</p>
+      <div class="rowbar">
+        <button class="btn primary" id="exportjson">Export trip (.json)</button>
+        <button class="btn" id="exportcsv">Export budget (.csv)</button>
+        <button class="btn" id="importbtn">Import a .json</button>
+        <button class="btn" id="sharebtn">Copy shareable link</button>
+        <button class="btn" id="printbtn">Print / save as PDF</button>
+        <input type="file" id="importfile" accept=".json,application/json" hidden>
+      </div>
+      <p class="okline" id="datanote">Autosave is on.</p>
+    </div>
+
+    <div class="card">
+      <h2>Start over</h2>
+      <p class="hint" style="margin:0 0 12px">Reset this trip's fields back to the defaults, or wipe
+        every trip stored in this browser. Neither can be undone.</p>
+      <div class="rowbar">
+        <button class="btn" id="resettrip">Reset this trip</button>
+        <button class="btn" id="wipeall">Delete all trips</button>
+      </div>
+    </div>
+  </section>
 
 </div>
 
+<div class="tip" id="tip"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script>
-(function(){
-  "use strict";
-  var $=function(i){return document.getElementById(i);};
-  function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
-  function pd(v){var p=String(v||'').split('-');return p.length===3?new Date(+p[0],+p[1]-1,+p[2]):null;}
-  function addD(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
-  function addH(d,h){return new Date(d.getTime()+h*3600000);}
-  function day0(d){return new Date(d.getFullYear(),d.getMonth(),d.getDate());}
-  function fmt(d){return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});}
-  function hhmm(d){return d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});}
-  function hh(h){var m=Math.round(h*60);return Math.floor(m/60)+'h'+(m%60?String(m%60).padStart(2,'0'):'');}
-  function money(n){return '$'+Math.round(n).toLocaleString();}
-  function nd(a,b){return Math.round((day0(b)-day0(a))/86400000);}
-
-  // ---------- live lookups: no built-in places ----------
-  var GEO={}, LEG={}, NET=null, Q=[], BUSY=false;
-  function setNet(v){NET=v;try{diag();}catch(e2){}var e=$('net');
-    e.className='net '+(v===true?'on':(v===false?'off':''));
-    $('netlabel').textContent=v===true?'lookups live':(v===false?'offline — type distances':'checking…');}
-  function pump(){ if(BUSY||!Q.length) return; BUSY=true;
-    var j=Q.shift(); j().then(function(){BUSY=false;setTimeout(pump,1100);},function(){BUSY=false;setTimeout(pump,1100);}); }
-  function enq(f){Q.push(f);pump();}
-
-  function geocode(n){
-    n=String(n||'').trim(); if(!n) return Promise.reject();
-    if(GEO[n]) return Promise.resolve(GEO[n]);
-    return fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(n))
-      .then(function(r){return r.json();}).then(function(j){
-        if(!j||!j.length) throw 0;
-        GEO[n]={lat:+j[0].lat,lon:+j[0].lon}; return GEO[n];});
-  }
-  function lk(a,b){return String(a).trim()+'||'+String(b).trim();}
-  function getLeg(a,b){
-    if(!a||!b||!String(a).trim()||!String(b).trim()) return null;
-    var k=lk(a,b);
-    if(LEG[k]) return LEG[k];
-    LEG[k]={state:'pending'};
-    enq(function(){
-      return Promise.all([geocode(a),geocode(b)]).then(function(p){
-        return fetch('https://router.project-osrm.org/route/v1/driving/'+p[0].lon+','+p[0].lat+';'+
-          p[1].lon+','+p[1].lat+'?overview=full&geometries=geojson')
-          .then(function(r){return r.json();}).then(function(j){
-            if(!j.routes||!j.routes[0]) throw 0;
-            LEG[k]={state:'ok',km:j.routes[0].distance/1000,h:j.routes[0].duration/3600,
-              geo:j.routes[0].geometry&&j.routes[0].geometry.coordinates};
-            setNet(true); refresh(true);});
-      }).catch(function(){ LEG[k]={state:'fail'}; if(NET!==true) setNet(false); refresh(true); });
-    });
-    return LEG[k];
-  }
-  function ok(l){return l&&(l.state==='ok'||l.state==='manual')?l:null;}
-  function manual(a,b,km){LEG[lk(a,b)]={state:'manual',km:km,h:km/85};refresh(true);}
-
-  var PRESETS={pab:{a:"Port aux Basques, NL",b:"North Sydney, NS",sea:7,t:'02:45'},
-    arg:{a:"Argentia, NL",b:"North Sydney, NS",sea:16.5,t:'17:00'},
-    none:{a:'',b:'',sea:0,t:'08:00'}};
-
-  // stops: {id, name, nights, rate, side:'out'|'back'}
-  var S={type:'return',stops:[]}, UID=0;
-
-  function ferryOn(){return !!($('portA').value.trim()&&$('portB').value.trim()&&(Number($('seah').value)||0)>0);}
-
-  function chain(){
-    var home=$('home').value, dest=$('dest').value, F=ferryOn();
-    var pA=$('portA').value, pB=$('portB').value;
-    var c=[{name:home,kind:'home',pin:'A',cls:'a'}];
-    if(F){ c.push({name:pA,kind:'port',pin:'⛴',cls:'f'}); c.push({name:pB,kind:'port',pin:'⛴',cls:'f',sea:true}); }
-    for(var i=0;i<S.stops.length;i++) if(S.stops[i].side==='out')
-      c.push({name:S.stops[i].name,kind:'stop',pin:'●',cls:'s',stop:S.stops[i]});
-    c.push({name:dest,kind:'dest',pin:'B',cls:'b'});
-    if(S.type==='return'){
-      for(var j=0;j<S.stops.length;j++) if(S.stops[j].side==='back')
-        c.push({name:S.stops[j].name,kind:'stop',pin:'●',cls:'s',stop:S.stops[j]});
-      if(F){ c.push({name:pB,kind:'port',pin:'⛴',cls:'f'}); c.push({name:pA,kind:'port',pin:'⛴',cls:'f',sea:true}); }
-      c.push({name:home,kind:'home',pin:'A',cls:'a'});
-    }
-    for(var k=1;k<c.length;k++){
-      c[k].leg = c[k].sea ? {sea:true} : getLeg(c[k-1].name,c[k].name);
-      c[k].from=c[k-1].name;
-    }
-    return c;
-  }
-
-  function model(){
-    var C=chain(), F=ferryOn();
-    var maxh=Math.max(3,Number($('maxh').value)||8);
-    var seaH=Number($('seah').value)||0, seaB=Number($('seahB').value)||seaH, ci=Number($('ci').value)||0;
-    var od=pd($('outdate').value)||new Date();
-    var ot=String($('outtime').value||'08:00').split(':');
-    var sail=new Date(od); sail.setHours(+ot[0]||0,+ot[1]||0,0,0);
-    var checkin=addH(sail,-ci);
-    var toPort=F?ok(getLeg($('home').value,$('portA').value)):null;
-    var mustLeave=addH(checkin,-(toPort?toPort.h:0));
-    var land=addH(sail,seaH);
-    var rsail=null,backLand=null;
-    if(S.type==='return'){
-      var rd=pd($('retdate').value), rt=String($('rettime').value||'14:30').split(':');
-      if(rd){ rsail=new Date(rd); rsail.setHours(+rt[0]||0,+rt[1]||0,0,0); backLand=addH(rsail,seaB); }
-    }
-    // driving hours that aren't covered by nights
-    var totKm=0,totH=0,pending=false;
-    for(var i=1;i<C.length;i++){
-      var l=C[i].leg;
-      if(!l) continue;
-      if(l.sea) continue;
-      if(l.state==='pending') pending=true;
-      var t=ok(l); if(t){totKm+=t.km;totH+=t.h;}
-    }
-    return {C:C,F:F,maxh:maxh,seaH:seaH,seaB:seaB,ci:ci,sail:sail,checkin:checkin,mustLeave:mustLeave,
-      land:land,rsail:rsail,backLand:backLand,toPort:toPort,totKm:totKm,totH:totH,pending:pending,
-      tstart:pd($('tstart').value),tend:pd($('tend').value),destN:Number($('destn').value)||0};
-  }
-
-  function legHTML(l,a,b){
-    if(!l) return '';
-    if(l.sea) return '<div class="leg"><span>⛴ <b>'+hh(Number($('seah').value)||0)+'</b> at sea</span></div>';
-    if(l.state==='pending') return '<div class="leg"><span class="pend">looking up…</span></div>';
-    if(l.state==='fail') return '<div class="leg"><span class="fail">no route found</span>'+
-      '<input type="number" placeholder="km" data-a="'+esc(a)+'" data-b="'+esc(b)+'"></div>';
-    return '<div class="leg"><span>🚗 <b>'+Math.round(l.km).toLocaleString()+' km</b></span>'+
-      '<span><b>'+hh(l.h)+'</b></span>'+(l.state==='manual'?'<span class="pend">yours</span>':'')+'</div>';
-  }
-
-  function renderSteps(M){
-    var h='';
-    for(var i=0;i<M.C.length;i++){
-      var c=M.C[i];
-      if(c.leg) h+=legHTML(c.leg,c.from,c.name);
-      if(c.stop){
-        h+='<div class="step" data-id="'+c.stop.id+'"><div class="pin '+c.cls+'">'+(i)+'</div>'+
-          '<input class="nm" data-f="name" type="text" value="'+esc(c.stop.name)+'" placeholder="Town">'+
-          '<input data-f="nights" type="number" min="0" max="60" value="'+c.stop.nights+'" title="nights">'+
-          '<input data-f="rate" type="number" min="0" step="5" value="'+(c.stop.rate==null?'':c.stop.rate)+'" placeholder="$/night">'+
-          '<button class="del" data-del="'+c.stop.id+'">&times;</button></div>';
-      } else {
-        var extra = c.kind==='dest' ? $('destn').value+' nights' : (c.kind==='home'?'start / end':'ferry terminal');
-        h+='<div class="step"><div class="pin '+c.cls+'">'+(c.pin)+'</div>'+
-          '<div class="nm">'+esc(c.name||'—')+'</div>'+
-          '<div style="grid-column:3/6;font-size:11px;color:var(--ink3)">'+extra+'</div></div>';
-      }
-    }
-    $('steps').innerHTML=h;
-  }
-
-  // ---------- map ----------
-  var MAP=null, LAYER=null, TILES_OK=null, LEAFLET=(typeof L!=='undefined');
-
-  function diag(){
-    function dot(v){return '<i class="'+(v===true?'y':(v===false?'n':''))+'"></i>';}
-    $('diag').innerHTML=
-      '<span>'+dot(LEAFLET)+'map library '+(LEAFLET?'loaded':'blocked')+'</span>'+
-      '<span>'+dot(NET)+'lookups '+(NET===true?'working':(NET===false?'blocked':'…'))+'</span>'+
-      '<span>'+dot(TILES_OK)+'map tiles '+(TILES_OK===true?'loading':(TILES_OK===false?'blocked':'…'))+'</span>';
-  }
-
-  // Always-available fallback: an ordered schematic of the route, no network needed.
-  function renderSchematic(M){
-    var h='<div class="schem"><div class="schem-t">Route</div>';
-    for(var i=0;i<M.C.length;i++){
-      var c=M.C[i], l=c.leg;
-      if(l){
-        var txt = l.sea ? '⛴ '+hh(Number($('seah').value)||0)+' at sea'
-          : (l.state==='ok'||l.state==='manual') ? Math.round(l.km).toLocaleString()+' km · '+hh(l.h)
-          : (l.state==='pending'?'looking up…':'distance not set');
-        h+='<div class="sbar'+(l.sea?' sea':'')+'">'+txt+'</div>';
-      }
-      h+='<div class="srow"><div class="sdot '+(c.cls||'')+'">'+(c.stop?(i):c.pin)+'</div>'+
-         '<div class="sname">'+esc(c.name||'—')+'</div></div>';
-    }
-    h+='</div>';
-    $('schematic').innerHTML=h;
-  }
-
-  function renderMap(M){
-    LEAFLET=(typeof L!=='undefined');
-    renderSchematic(M);
-
-    if(!LEAFLET){
-      $('map').style.display='none';
-      $('schematic').style.display='block';
-      $('mapmsg').style.display='block';
-      $('mapmsg').textContent='Map library is blocked here — showing the route as a list instead.';
-      diag(); return;
-    }
-    $('map').style.display='';
-    $('mapmsg').style.display='none';
-
-    if(!MAP){
-      try{
-        MAP=L.map('map',{scrollWheelZoom:false}).setView([47.5,-60],5);
-        var tl=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-          {maxZoom:18,attribution:'© OpenStreetMap'});
-        tl.on('tileload',function(){ if(TILES_OK!==true){TILES_OK=true;diag();} });
-        tl.on('tileerror',function(){ if(TILES_OK===null){TILES_OK=false;diag();
-          $('schematic').style.display='block';
-          $('mapmsg').style.display='block';
-          $('mapmsg').textContent='Map tiles are blocked here — the route list below still works.';} });
-        tl.addTo(MAP);
-        setTimeout(function(){ if(TILES_OK===null){TILES_OK=false;diag();$('schematic').style.display='block';} },6000);
-      }catch(err){ MAP=null; }
-    }
-    if(!MAP){ diag(); return; }
-
-    if(LAYER) MAP.removeLayer(LAYER);
-    LAYER=L.layerGroup().addTo(MAP);
-    var bounds=[];
-    for(var i=0;i<M.C.length;i++){
-      var c=M.C[i], g=GEO[String(c.name||'').trim()];
-      if(g){
-        bounds.push([g.lat,g.lon]);
-        L.marker([g.lat,g.lon],{icon:L.divIcon({className:'',html:'<div class="marker '+(c.cls||'')+'">'+
-          (c.stop?i:c.pin)+'</div>',iconSize:[24,24],iconAnchor:[12,12]})}).addTo(LAYER).bindPopup(esc(c.name));
-      }
-      var l=c.leg;
-      if(l&&l.geo&&l.geo.length){
-        var line=l.geo.map(function(pt){return [pt[1],pt[0]];});
-        L.polyline(line,{color:'#eb6834',weight:4,opacity:.85}).addTo(LAYER);
-        bounds=bounds.concat(line);
-      } else if(l&&l.sea){
-        var a=GEO[String(M.C[i-1].name||'').trim()], b2=GEO[String(c.name||'').trim()];
-        if(a&&b2) L.polyline([[a.lat,a.lon],[b2.lat,b2.lon]],
-          {color:'#2a78d6',weight:3,dashArray:'6 6',opacity:.9}).addTo(LAYER);
-      }
-    }
-    if(bounds.length>1){ try{ MAP.fitBounds(bounds,{padding:[24,24]}); }catch(e){} }
-    if(!bounds.length){
-      $('schematic').style.display='block';
-      $('mapmsg').style.display='block';
-      $('mapmsg').textContent='No coordinates yet — place lookups are '+(NET===false?'blocked':'still running')+'.';
-    } else { $('schematic').style.display= TILES_OK===false?'block':'none'; }
-    diag();
-  }
-
-  function renderDerived(M){
-    var h='';
-    if(M.F){
-      h+='<div class="dv"><div class="k">Set off</div><div class="v">'+(M.toPort?hhmm(M.mustLeave):'—')+'</div>'+
-        '<div class="s">'+(M.toPort?fmt(M.mustLeave)+' · '+Math.round(M.toPort.km)+' km · '+hh(M.toPort.h)
-          :'waiting on the lookup')+'</div></div>'+
-        '<div class="dv f"><div class="k">Checked in by</div><div class="v">'+hhmm(M.checkin)+'</div>'+
-        '<div class="s">'+fmt(M.checkin)+' · '+M.ci+'h before</div></div>'+
-        '<div class="dv f"><div class="k">Docks</div><div class="v">'+hhmm(M.land)+'</div>'+
-        '<div class="s">'+fmt(M.land)+' · '+hh(M.seaH)+' at sea</div></div>';
-    }
-    var nights=0; for(var i=0;i<S.stops.length;i++) nights+=Number(S.stops[i].nights)||0;
-    var need=Math.ceil(M.totH/M.maxh);
-    h+='<div class="dv"><div class="k">Driving days needed</div><div class="v">'+(M.pending?'…':need)+'</div>'+
-      '<div class="s">'+(M.pending?'still looking up':Math.round(M.totH)+'h total at '+M.maxh+'h a day')+'</div></div>';
-    $('derived').innerHTML=h;
-  }
-
-  function renderChecks(M){
-    var m=[];
-    if(M.tstart&&M.tend&&M.tend<=M.tstart) m.push('Trip end is before the start.');
-    var span=(M.tstart&&M.tend)?nd(M.tstart,M.tend):0;
-    var nights=M.destN; for(var i=0;i<S.stops.length;i++) nights+=Number(S.stops[i].nights)||0;
-    var need=M.pending?0:Math.ceil(M.totH/M.maxh);
-    var used=nights+need;
-    if(span&&used>span)
-      m.push('Your stops and driving need about <b>'+used+'</b> days but the trip window is <b>'+span+
-        '</b> — trim a stop, or move the end date.');
-    if(m.length){$('checks').innerHTML='<div class="warn">'+m.join('<br>')+'</div>';return;}
-    $('checks').innerHTML='<div class="okline">'+(M.pending?'Looking up distances…':
-      'About <b>'+used+'</b> days used of a <b>'+span+'</b>-day window — <b>'+Math.max(0,span-used)+
-      '</b> spare.')+'</div>';
-  }
-
-  function renderStats(M){
-    var nights=M.destN; for(var i=0;i<S.stops.length;i++) nights+=Number(S.stops[i].nights)||0;
-    var sea=M.F?(M.seaH+(S.type==='return'?M.seaB:0)):0;
-    $('stats').innerHTML=
-      '<div class="stat"><div class="k">Stops</div><div class="v">'+(S.stops.length+1)+'</div></div>'+
-      '<div class="stat"><div class="k">Driving</div><div class="v">'+(M.pending?'…':hh(M.totH))+'</div></div>'+
-      '<div class="stat"><div class="k">Distance</div><div class="v">'+(M.pending?'…':Math.round(M.totKm).toLocaleString()+' km')+'</div></div>'+
-      (sea?'<div class="stat"><div class="k">At sea</div><div class="v">'+hh(sea)+'</div></div>':'')+
-      '<div class="stat"><div class="k">Nights</div><div class="v">'+nights+'</div></div>'+
-      '<div class="stat"><div class="k">Cost</div><div class="v">'+($('budget').getAttribute('data-total')||'—')+'</div></div>';
-  }
-
-  function renderBudget(M){
-    var f=Number($('ferrycost').value)||0, dr=Number($('destrate').value)||0, f100=Number($('fuel100').value)||0;
-    var h='',up=0,tot=0;
-    if(M.F) h+='<tr><td>Ferry'+(S.type==='oneway'?' (one way)':'')+'</td><td class="r">'+
-      money(S.type==='oneway'?f/2:f)+'</td></tr>';
-    h+='<tr><td>'+esc($('dest').value)+' · '+M.destN+' night'+(M.destN===1?'':'s')+'</td><td class="r">'+
-      money(M.destN*dr)+'</td></tr>';
-    for(var i=0;i<S.stops.length;i++){
-      var s=S.stops[i], n=Number(s.nights)||0;
-      if(!n) continue;
-      if(s.rate==null){up++;} else tot+=n*s.rate;
-      h+='<tr><td>'+esc(s.name)+' · '+n+' night'+(n===1?'':'s')+'</td><td class="r">'+
-        (s.rate==null?'<span class="q">?</span>':money(n*s.rate))+'</td></tr>';
-    }
-    var fuel=(f100&&!M.pending)?M.totKm/100*f100:0;
-    if(f100) h+='<tr><td>Fuel · '+Math.round(M.totKm).toLocaleString()+' km</td><td class="r">'+money(fuel)+'</td></tr>';
-    var g=(M.F?(S.type==='oneway'?f/2:f):0)+M.destN*dr+tot+fuel;
-    h+='<tr class="tot"><td>Total so far</td><td class="r">'+money(g)+'</td></tr>';
-    $('budget').innerHTML=h;
-    $('budget').setAttribute('data-total',money(g));
-    $('bnote').innerHTML=(up?'<span class="q">'+up+' stop'+(up===1?'':'s')+' unpriced</span> — left out rather than guessed. ':'')+
-      (f100?'':'Set a fuel rate to include driving costs.');
-  }
-
-  // ---------- schedule: timed events, plus overnight bands that span days ----------
-  function schedule(M){
-    var ev={}, bands=[];
-    function push(d,o){var k=d.getFullYear()+'-'+d.getMonth()+'-'+d.getDate();(ev[k]=ev[k]||[]).push(o);}
-
-    var cur;
-    if(M.F){
-      push(M.mustLeave,{k:'drive',t:hhmm(M.mustLeave),l:'Drive to '+String($('portA').value).split(',')[0]});
-      push(M.sail,{k:'ferry',t:hhmm(M.sail),l:'Crossing'});
-      if(day0(M.land)-day0(M.sail)!==0) push(M.land,{k:'ferry',t:hhmm(M.land),l:'Docks'});
-      cur=day0(M.land);
-    } else {
-      cur=M.tstart?day0(M.tstart):day0(new Date());
-      push(cur,{k:'drive',t:'',l:'Set off'});
-    }
-
-    // stops on the way out: you drive there during the day, sleep there that night
-    for(var i=0;i<S.stops.length;i++){
-      var st=S.stops[i]; if(st.side!=='out') continue;
-      var n=Number(st.nights)||0;
-      push(cur,{k:'drive',t:'',l:'Drive to '+(st.name||'stop')});
-      if(n>0){ bands.push({name:st.name||'Stop',from:new Date(cur),to:addD(cur,n),mine:true}); cur=addD(cur,n); }
-    }
-    push(cur,{k:'drive',t:'',l:'Arrive '+String($('dest').value).split(',')[0]});
-    if(M.destN>0){ bands.push({name:$('dest').value,from:new Date(cur),to:addD(cur,M.destN),mine:false}); cur=addD(cur,M.destN); }
-
-    if(S.type==='return'){
-      push(cur,{k:'drive',t:'',l:'Leave '+String($('dest').value).split(',')[0]});
-      for(var j=0;j<S.stops.length;j++){
-        var sb=S.stops[j]; if(sb.side!=='back') continue;
-        var nb=Number(sb.nights)||0;
-        push(cur,{k:'drive',t:'',l:'Drive to '+(sb.name||'stop')});
-        if(nb>0){ bands.push({name:sb.name||'Stop',from:new Date(cur),to:addD(cur,nb),mine:true}); cur=addD(cur,nb); }
-      }
-      if(M.F&&M.rsail){
-        push(M.rsail,{k:'ferry',t:hhmm(M.rsail),l:'Crossing home'});
-        if(M.backLand&&day0(M.backLand)-day0(M.rsail)!==0) push(M.backLand,{k:'ferry',t:hhmm(M.backLand),l:'Docks'});
-      }
-      if(M.tend) push(M.tend,{k:'drive',t:'',l:'Home'});
-    }
-    return {ev:ev,bands:bands};
-  }
-
-  function renderCal(M){
-    var SC=schedule(M);
-    var a=M.tstart?day0(M.tstart):day0(new Date());
-    var b=M.tend?day0(M.tend):addD(a,14);
-    if(b<a) b=addD(a,1);
-    if(nd(a,b)>200) b=addD(a,200);
-    var DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], out='', g=0;
-    var m=new Date(a.getFullYear(),a.getMonth(),1), lastM=new Date(b.getFullYear(),b.getMonth(),1);
-    while(m<=lastM&&g++<8){
-      var y=m.getFullYear(), mo=m.getMonth(), dim=new Date(y,mo+1,0).getDate();
-      out+='<div class="mname">'+m.toLocaleDateString('en-US',{month:'long',year:'numeric'})+'</div><div class="cal">';
-      for(var i=0;i<7;i++) out+='<div class="dow">'+DOW[i]+'</div>';
-      for(var lead=new Date(y,mo,1).getDay(),p=0;p<lead;p++) out+='<div class="cd out"></div>';
-      for(var dd=1;dd<=dim;dd++){
-        var d=new Date(y,mo,dd), k=y+'-'+mo+'-'+dd;
-        var inTrip=(d>=a&&d<=b);
-        var evs=SC.ev[k]||[], cell='';
-        for(var e=0;e<evs.length&&e<3;e++)
-          cell+='<div class="cev '+evs[e].k+'">'+(evs[e].t?'<span class="tm">'+evs[e].t+'</span> ':'')+esc(evs[e].l)+'</div>';
-        var band='';
-        for(var q=0;q<SC.bands.length;q++){
-          var B=SC.bands[q];
-          if(d>=day0(B.from)&&d<day0(B.to)){
-            var isStart=(nd(day0(B.from),d)===0), isEnd=(nd(d,day0(B.to))===1);
-            var pos=isStart&&isEnd?'solo':(isStart?'start':(isEnd?'end':'mid'));
-            band='<div class="band'+(B.mine?' mine':'')+' '+pos+(isStart?'':' cont')+'">'+esc(B.name)+'</div>';
-            break;
-          }
-        }
-        out+='<div class="cd'+(inTrip?' act':'')+'"><div class="num">'+dd+'</div>'+cell+band+'</div>';
-      }
-      var tail=(7-((lead+dim)%7))%7;
-      for(var t2=0;t2<tail;t2++) out+='<div class="cd out"></div>';
-      out+='</div>';
-      m=new Date(y,mo+1,1);
-    }
-    $('cal').innerHTML=out;
-  }
-
-  function refresh(keep){
-    var M=model();
-    renderSteps(M); renderDerived(M); renderChecks(M); renderBudget(M); renderStats(M);
-    renderCal(M); renderMap(M);
-    $('retblock').style.display=S.type==='return'?'':'none';
-  }
-
-  // ---- events ----
-  $('steps').addEventListener('input',function(e){
-    var row=e.target.closest('.step'); if(!row) return;
-    var id=+row.getAttribute('data-id'), f=e.target.getAttribute('data-f');
-    for(var i=0;i<S.stops.length;i++) if(S.stops[i].id===id){
-      if(f==='rate') S.stops[i].rate=e.target.value===''?null:Number(e.target.value)||0;
-      else if(f==='nights') S.stops[i].nights=Number(e.target.value)||0;
-      else S.stops[i].name=e.target.value;
-    }
-    clearTimeout(window.__t); window.__t=setTimeout(function(){refresh(true);},400);
-  });
-  $('steps').addEventListener('change',function(e){
-    var i=e.target.closest('input[data-a]');
-    if(i){var km=Number(i.value)||0; if(km>0) manual(i.getAttribute('data-a'),i.getAttribute('data-b'),km);}
-  });
-  $('steps').addEventListener('click',function(e){
-    var b=e.target.closest('[data-del]'); if(!b) return;
-    var id=+b.getAttribute('data-del');
-    S.stops=S.stops.filter(function(x){return x.id!==id;});
-    refresh();
-  });
-  $('addOut').addEventListener('click',function(){
-    UID++; S.stops.push({id:UID,name:'',nights:1,rate:null,side:'out'}); refresh();
-  });
-  $('addBack').addEventListener('click',function(){
-    UID++; S.stops.push({id:UID,name:'',nights:1,rate:null,side:'back'}); refresh();
-  });
-  $('ttype').addEventListener('click',function(e){
-    var b=e.target.closest('[data-t]'); if(!b) return;
-    S.type=b.getAttribute('data-t');
-    [].slice.call(this.children).forEach(function(x){x.classList.toggle('on',x===b);});
-    refresh();
-  });
-  $('presets').addEventListener('click',function(e){
-    var b=e.target.closest('[data-p]'); if(!b) return;
-    var p=PRESETS[b.getAttribute('data-p')];
-    $('portA').value=p.a; $('portB').value=p.b; $('seah').value=p.sea; $('seahB').value=p.sea; $('outtime').value=p.t;
-    [].slice.call(this.children).forEach(function(x){x.classList.toggle('on',x===b);});
-    refresh();
-  });
-  ['home','dest','portA','portB','tstart','tend','destn','maxh','seah','seahB','ci',
-   'outdate','outtime','retdate','rettime','ferrycost','destrate','fuel100'].forEach(function(id){
-    var t=null;
-    $(id).addEventListener('input',function(){clearTimeout(t);t=setTimeout(function(){refresh(true);},450);});
-    $(id).addEventListener('change',function(){refresh(true);});
-  });
-
-  setNet(null);
-  refresh();
-})();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
