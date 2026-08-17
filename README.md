@@ -1,5 +1,7 @@
 # Trip planner
 
+**Live: https://obatron.github.io/RoadTripplanner/**
+
 A single-file, dependency-light road-trip planner. Plan a drive between any two
 places, add overnight stops, work the schedule backwards from a ferry sailing,
 and see the whole thing as a calendar, a route list and a budget.
@@ -28,18 +30,14 @@ It's one file. Open `index.html`, or serve the folder:
 python3 -m http.server 8000
 ```
 
-## Publishing to GitHub Pages
+## Publishing
+
+This repo is already published to GitHub Pages from `main` / root, so pushing to
+`main` redeploys the live site:
 
 ```bash
-git init
-git add -A
-git commit -m "Trip planner"
-git branch -M main
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
+git add -A && git commit -m "Update planner" && git push
 ```
-
-Then in the repo: **Settings → Pages → Source: Deploy from a branch → `main` / `root`**.
 
 Pages serves over HTTPS from a real origin, so the map tiles and the geocoding
 and routing calls all work — which they may not when the same file is opened
