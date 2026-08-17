@@ -220,25 +220,50 @@
   /* ---------------- the route chain ---------------- */
   function ferryOn() { return !!(T.ferry.portA.trim() && T.ferry.portB.trim() && num(T.ferry.seaH) > 0); }
 
+  /* Four places a stop can sit, so a crossing can have stops on either side of it:
+       home → [pre] → portA ⇢ portB → [out] → dest → [back] → portB ⇢ portA → [post] → home
+     With no ferry, pre+out both simply fall between home and the destination. */
+  var SEGS = [
+    { k: 'pre',  ferry: 'Before the crossing',   plain: 'On the way there', add: '+ Before the crossing' },
+    { k: 'out',  ferry: 'After the crossing',    plain: 'On the way there', add: '+ After the crossing' },
+    { k: 'back', ferry: 'Before sailing home',   plain: 'Coming back',      add: '+ Before sailing home' },
+    { k: 'post', ferry: 'After sailing home',    plain: 'Coming back',      add: '+ After sailing home' }
+  ];
+  function segLabel(k) {
+    var s = SEGS.filter(function (x) { return x.k === k; })[0];
+    if (!s) return k;
+    return ferryOn() ? s.ferry : s.plain;
+  }
+  function stopsIn(seg) { return T.stops.filter(function (s) { return s.side === seg; }); }
+  /* A one-way trip never reaches the return segments, so those stops are parked:
+     they stay in the data and stay editable, but they are not on the route and must
+     not quietly keep charging for their nights. */
+  function isParked(s) { return T.type !== 'return' && (s.side === 'back' || s.side === 'post'); }
+  function activeStops() { return T.stops.filter(function (s) { return !isParked(s); }); }
+  function parkedStops() { return T.stops.filter(isParked); }
+  function pushStops(c, seg) {
+    stopsIn(seg).forEach(function (s) {
+      c.push({ name: s.name, kind: 'stop', pin: '●', cls: 's', stop: s });
+    });
+  }
+
   function chain() {
     var F = ferryOn(), f = T.ferry;
     var c = [{ name: T.home, kind: 'home', pin: 'A', cls: 'a' }];
+    pushStops(c, 'pre');
     if (F) {
       c.push({ name: f.portA, kind: 'port', pin: '⛴', cls: 'f' });
       c.push({ name: f.portB, kind: 'port', pin: '⛴', cls: 'f', sea: true });
     }
-    T.stops.forEach(function (s) {
-      if (s.side === 'out') c.push({ name: s.name, kind: 'stop', pin: '●', cls: 's', stop: s });
-    });
+    pushStops(c, 'out');
     c.push({ name: T.dest, kind: 'dest', pin: 'B', cls: 'b' });
     if (T.type === 'return') {
-      T.stops.forEach(function (s) {
-        if (s.side === 'back') c.push({ name: s.name, kind: 'stop', pin: '●', cls: 's', stop: s });
-      });
+      pushStops(c, 'back');
       if (F) {
         c.push({ name: f.portB, kind: 'port', pin: '⛴', cls: 'f' });
         c.push({ name: f.portA, kind: 'port', pin: '⛴', cls: 'f', sea: true });
       }
+      pushStops(c, 'post');
       c.push({ name: T.home, kind: 'home', pin: 'A', cls: 'a' });
     }
     for (var k = 1; k < c.length; k++) {
@@ -256,8 +281,28 @@
     var ot = String(f.outTime || '08:00').split(':');
     var sail = new Date(od); sail.setHours(num(ot[0]), num(ot[1]), 0, 0);
     var checkin = addH(sail, -ci);
-    var toPort = F ? ok(getLeg(T.home, f.portA)) : null;
-    var mustLeave = addH(checkin, -(toPort ? toPort.h : 0));
+
+    // The run to the terminal may now have stops of its own, so the "leave home"
+    // time has to walk back through those legs and any nights spent on them.
+    var pre = stopsIn('pre');
+    var preNames = [T.home].concat(pre.map(function (s) { return s.name; })).concat([f.portA]);
+    var preDrive = 0, preComplete = true;
+    for (var pi = 1; pi < preNames.length; pi++) {
+      var pl = ok(getLeg(preNames[pi - 1], preNames[pi]));
+      if (pl) preDrive += pl.h; else preComplete = false;
+    }
+    var preNights = 0;
+    pre.forEach(function (s) { preNights += num(s.nights); });
+    var toPort = F ? (preComplete ? { h: preDrive, km: 0 } : null) : null;
+    if (F && preComplete) {
+      var km = 0;
+      for (var qi = 1; qi < preNames.length; qi++) {
+        var ql = ok(getLeg(preNames[qi - 1], preNames[qi]));
+        if (ql) km += ql.km;
+      }
+      toPort.km = km;
+    }
+    var mustLeave = addH(checkin, -(preDrive + preNights * 24));
     var land = addH(sail, seaH);
     var rsail = null, backLand = null;
     if (T.type === 'return') {
@@ -276,6 +321,7 @@
     return {
       C: C, F: F, maxh: maxh, seaH: seaH, seaB: seaB, ci: ci, sail: sail, checkin: checkin,
       mustLeave: mustLeave, land: land, rsail: rsail, backLand: backLand, toPort: toPort,
+      pre: pre, preNights: preNights,
       totKm: totKm, totH: totH, pending: pending, unrouted: unrouted,
       tstart: pd(T.start), tend: pd(T.end), destN: num(T.destNights)
     };
@@ -294,7 +340,7 @@
   }
   function lodgingPlanned() {
     var t = num(T.destNights) * num(T.destRate), unpriced = 0;
-    T.stops.forEach(function (s) {
+    activeStops().forEach(function (s) {
       var n = num(s.nights);
       if (!n) return;
       if (s.rate == null || s.rate === '') unpriced++;
@@ -371,39 +417,48 @@
     var ev = {}, bands = [];
     function push(d, o) { var k = iso(d); (ev[k] = ev[k] || []).push(o); }
 
+    // Walk a segment forward from `cur`: drive to each stop, sleep there, move on.
+    function walk(seg, cur) {
+      stopsIn(seg).forEach(function (st) {
+        var n = num(st.nights);
+        push(cur, { k: 'drive', t: '', l: 'Drive to ' + (st.name || 'stop'), auto: 1 });
+        if (n > 0) {
+          bands.push({ name: st.name || 'Stop', from: new Date(cur), to: addD(cur, n), mine: true });
+          cur = addD(cur, n);
+        }
+      });
+      return cur;
+    }
+
     var cur;
     if (M.F) {
-      push(M.mustLeave, { k: 'drive', t: hhmm(M.mustLeave), l: 'Drive to ' + String(T.ferry.portA).split(',')[0], auto: 1 });
+      var first = M.pre.length ? (M.pre[0].name || 'the first stop') : String(T.ferry.portA).split(',')[0];
+      push(M.mustLeave, { k: 'drive', t: hhmm(M.mustLeave), l: 'Leave home for ' + first, auto: 1 });
+      var preCur = walk('pre', day0(M.mustLeave));
+      if (M.pre.length) push(preCur, { k: 'drive', t: '', l: 'Drive to ' + String(T.ferry.portA).split(',')[0], auto: 1 });
       push(M.sail, { k: 'ferry', t: hhmm(M.sail), l: 'Crossing', auto: 1 });
       if (nd(M.sail, M.land) !== 0) push(M.land, { k: 'ferry', t: hhmm(M.land), l: 'Docks', auto: 1 });
       cur = day0(M.land);
     } else {
       cur = M.tstart ? day0(M.tstart) : day0(new Date());
       push(cur, { k: 'drive', t: '', l: 'Set off', auto: 1 });
+      cur = walk('pre', cur);
     }
 
-    T.stops.forEach(function (st) {
-      if (st.side !== 'out') return;
-      var n = num(st.nights);
-      push(cur, { k: 'drive', t: '', l: 'Drive to ' + (st.name || 'stop'), auto: 1 });
-      if (n > 0) { bands.push({ name: st.name || 'Stop', from: new Date(cur), to: addD(cur, n), mine: true }); cur = addD(cur, n); }
-    });
+    cur = walk('out', cur);
     push(cur, { k: 'drive', t: '', l: 'Arrive ' + String(T.dest).split(',')[0], auto: 1 });
     if (M.destN > 0) { bands.push({ name: T.dest, from: new Date(cur), to: addD(cur, M.destN), mine: false }); cur = addD(cur, M.destN); }
 
     if (T.type === 'return') {
       push(cur, { k: 'drive', t: '', l: 'Leave ' + String(T.dest).split(',')[0], auto: 1 });
-      T.stops.forEach(function (sb) {
-        if (sb.side !== 'back') return;
-        var nb = num(sb.nights);
-        push(cur, { k: 'drive', t: '', l: 'Drive to ' + (sb.name || 'stop'), auto: 1 });
-        if (nb > 0) { bands.push({ name: sb.name || 'Stop', from: new Date(cur), to: addD(cur, nb), mine: true }); cur = addD(cur, nb); }
-      });
+      cur = walk('back', cur);
       if (M.F && M.rsail) {
         push(M.rsail, { k: 'ferry', t: hhmm(M.rsail), l: 'Crossing home', auto: 1 });
         if (M.backLand && nd(M.rsail, M.backLand) !== 0)
           push(M.backLand, { k: 'ferry', t: hhmm(M.backLand), l: 'Docks', auto: 1 });
+        cur = day0(M.backLand || M.rsail);
       }
+      cur = walk('post', cur);
       if (M.tend) push(M.tend, { k: 'drive', t: '', l: 'Home', auto: 1 });
     }
 
@@ -440,7 +495,7 @@
       var nights = nd(day0(B.from), day0(B.to));
       var rate = B.mine ? null : num(T.destRate);
       if (B.mine) {
-        var st = T.stops.filter(function (s) { return (s.name || 'Stop') === B.name; })[0];
+        var st = activeStops().filter(function (s) { return (s.name || 'Stop') === B.name; })[0];
         rate = st && st.rate != null && st.rate !== '' ? num(st.rate) : 0;
       }
       for (var j = 0; j < nights; j++) {
@@ -481,7 +536,7 @@
   /* ---------------- render: stats ---------------- */
   function renderStats(M, B) {
     var nights = M.destN;
-    T.stops.forEach(function (s) { nights += num(s.nights); });
+    activeStops().forEach(function (s) { nights += num(s.nights); });
     var sea = M.F ? (M.seaH + (T.type === 'return' ? M.seaB : 0)) : 0;
     var days = tripDays(M);
     var per = num(T.travellers, 1) || 1;
@@ -525,15 +580,70 @@
       '<span>' + cost + '</span></div>';
   }
 
+  /* A re-render replaces these containers wholesale, which would yank the caret
+     out of whatever you are typing in. While a container holds focus we skip its
+     rebuild and mark it stale; the focusout handler rebuilds once you leave. */
+  var stale = {};
+  function holdsFocus(el) {
+    var a = document.activeElement;
+    return !!(el && a && a !== document.body && el.contains(a));
+  }
+  /* Structural edits — reorder, delete, moving a stop across the crossing — are
+     driven by controls that live inside the container being rebuilt, so they would
+     trip the focus guard above and appear to do nothing. Drop focus first. */
+  function blurActive() {
+    var a = document.activeElement;
+    if (a && a !== document.body && typeof a.blur === 'function') a.blur();
+  }
+  ['steps', 'days', 'budgetbody'].forEach(function (id) {
+    $(id).addEventListener('focusout', function () {
+      var self = this;
+      setTimeout(function () {
+        if (holdsFocus(self)) return;          // moved to a sibling field, still typing
+        if (stale[id]) { stale[id] = false; refresh(); }
+      }, 0);
+    });
+  });
+
+  // Only offer the segments that mean something for the current trip shape.
+  function segsAvailable() {
+    var F = ferryOn(), ret = T.type === 'return';
+    return SEGS.filter(function (s) {
+      if (!F && (s.k === 'pre' || s.k === 'post')) return false;
+      if (!ret && (s.k === 'back' || s.k === 'post')) return false;
+      return true;
+    });
+  }
+  function segOptions(sel) {
+    var av = segsAvailable();
+    // Never hide the stop's own segment, even if the trip shape changed under it.
+    if (!av.some(function (s) { return s.k === sel; })) {
+      var own = SEGS.filter(function (s) { return s.k === sel; })[0];
+      if (own) av = av.concat([own]);
+    }
+    return av.map(function (s) {
+      return '<option value="' + s.k + '"' + (s.k === sel ? ' selected' : '') + '>' +
+        esc(ferryOn() ? s.ferry : s.plain) + '</option>';
+    }).join('');
+  }
+  function renderAddRow() {
+    $('addrow').innerHTML = segsAvailable().map(function (s) {
+      return '<button class="btn" data-addseg="' + s.k + '">' +
+        esc(ferryOn() ? s.add : (s.k === 'pre' || s.k === 'out' ? '+ Stop on the way there' : '+ Stop coming back')) +
+        '</button>';
+    }).join('');
+  }
+
   function renderSteps(M) {
-    var h = '', outN = T.stops.filter(function (s) { return s.side === 'out'; }).length;
-    var backN = T.stops.filter(function (s) { return s.side === 'back'; }).length;
+    renderAddRow();
+    if (holdsFocus($('steps'))) { stale.steps = true; return; }
+    var h = '', outN = T.stops.length;
     for (var i = 0; i < M.C.length; i++) {
       var c = M.C[i];
       if (c.leg) h += legHTML(c.leg, c.from, c.name);
       if (c.stop) {
         var s = c.stop;
-        var sameSide = T.stops.filter(function (x) { return x.side === s.side; });
+        var sameSide = stopsIn(s.side);
         var pos = sameSide.indexOf(s), last = sameSide.length - 1;
         h += '<div class="node" data-id="' + s.id + '">' +
           '<div class="hd"><div class="pin ' + c.cls + '">' + i + '</div>' +
@@ -547,7 +657,9 @@
             '<input data-f="notes" type="text" value="' + esc(s.notes || '') + '" placeholder="Note — booking, who to see, why stop">' +
             '<input data-f="nights" type="number" min="0" max="60" value="' + num(s.nights) + '" title="Nights" aria-label="Nights">' +
             '<input data-f="rate" type="number" min="0" step="5" value="' + (s.rate == null ? '' : s.rate) + '" placeholder="$/night" aria-label="Cost per night">' +
-          '</div></div>';
+          '</div>' +
+          '<div class="segpick"><select data-f="side" aria-label="Where on the route">' +
+            segOptions(s.side) + '</select></div></div>';
       } else {
         var extra = c.kind === 'dest' ? num(T.destNights) + ' nights · ' + money(num(T.destRate)) + '/night'
                   : (c.kind === 'home' ? 'start / end' : 'ferry terminal');
@@ -556,7 +668,23 @@
           '<div class="fixed">' + extra + '</div></div></div>';
       }
     }
-    if (!outN && !backN) h += '<p class="hint">No stops yet — add one, or click the map.</p>';
+    if (!outN) h += '<p class="hint">No stops yet — add one, or click the map.</p>';
+
+    var parked = parkedStops();
+    if (parked.length) {
+      h += '<div class="parked"><p class="hint" style="margin:10px 0 6px"><b>' + parked.length + ' stop' +
+        (parked.length === 1 ? '' : 's') + ' not on a one-way trip</b> — kept here, and not counted in the ' +
+        'distance or the budget. Switch to Return, or move them.</p>';
+      parked.forEach(function (s) {
+        h += '<div class="node off" data-id="' + s.id + '">' +
+          '<div class="hd"><div class="pin">–</div>' +
+          '<input class="nm" data-f="name" type="text" value="' + esc(s.name) + '" placeholder="Town or city">' +
+          '<span class="ctl"><button class="iconbtn del" data-del="1" title="Remove">×</button></span></div>' +
+          '<div class="segpick"><select data-f="side" aria-label="Where on the route">' +
+          segOptions(s.side) + '</select></div></div>';
+      });
+      h += '</div>';
+    }
     $('steps').innerHTML = h;
   }
 
@@ -673,8 +801,8 @@
         pendingClick = false;
         if (!name) { $('maphint').textContent = 'Nothing found there — try nearer a town.'; return; }
         GEO[name] = { lat: +lat, lon: +lon };
-        var side = (T.type === 'return' && T.stops.filter(function (s) { return s.side === 'out'; }).length >= 1
-                    && T.stops.filter(function (s) { return s.side === 'back'; }).length === 0) ? 'out' : 'out';
+        // Drop it in the first segment that exists for this trip shape.
+        var side = (segsAvailable()[0] || { k: 'out' }).k;
         T.stops.push({ id: uid(), name: name, side: side, nights: 1, rate: null, notes: '' });
         $('maphint').textContent = 'Added ' + name + '. Click the map again for another.';
         saveDB(); refresh();
@@ -708,11 +836,17 @@
     if (M.tstart && M.tend && M.tend <= M.tstart) m.push('Trip end is before the start.');
     var span = (M.tstart && M.tend) ? nd(M.tstart, M.tend) : 0;
     var nights = M.destN;
-    T.stops.forEach(function (s) { nights += num(s.nights); });
+    activeStops().forEach(function (s) { nights += num(s.nights); });
     var need = M.pending ? 0 : Math.ceil(M.totH / M.maxh);
     var used = nights + need;
     if (M.unrouted) m.push(M.unrouted + ' leg' + (M.unrouted === 1 ? '' : 's') +
       ' could not be routed — type the distance in, or check the spelling.');
+    // Stops before the crossing push the departure earlier, which can land it
+    // outside the stated trip window — where its days would silently not be drawn.
+    if (M.F && M.tstart && day0(M.mustLeave) < day0(M.tstart))
+      m.push('To catch the ' + fmt(M.sail) + ' sailing you have to leave home on <b>' + fmt(M.mustLeave) +
+        '</b> — earlier than your start date. Move <b>Trip starts</b> back to ' + fmt(M.mustLeave) +
+        ', or those days will not appear in the itinerary.');
     if (span && used > span)
       m.push('Your stops and driving need about <b>' + used + '</b> days but the trip window is <b>' + span +
         '</b> — trim a stop, or move the end date.');
@@ -724,6 +858,7 @@
 
   /* ---------------- render: itinerary ---------------- */
   function renderDays(M, SC) {
+    if (holdsFocus($('days'))) { stale.days = true; return; }
     if (!M.tstart || !M.tend || tripDays(M) < 1) {
       $('days').innerHTML = '<p class="empty">Set a start and end date to lay the days out.</p>';
       return;
@@ -797,6 +932,7 @@
 
   /* ---------------- render: budget table ---------------- */
   function renderBudget(M, B) {
+    if (holdsFocus($('budgetbody'))) { stale.budgetbody = true; renderBudgetNote(M, B); return; }
     var h = '';
     B.rows.forEach(function (r) {
       var diff = r.actual == null ? null : r.planned - r.actual;
@@ -841,7 +977,10 @@
         (B.withActual === 1 ? '' : 's') + ' with an actual entered (of ' + B.costed +
         ' costed) — against ' + money(B.plannedSoFar) + ' planned on those lines.</span></td></tr>';
     $('budgetbody').innerHTML = h;
+    renderBudgetNote(M, B);
+  }
 
+  function renderBudgetNote(M, B) {
     var lp = lodgingPlanned(), per = num(T.travellers, 1) || 1, days = tripDays(M);
     var bits = [];
     bits.push('<b>' + money(B.withCont / per) + '</b> a head for ' + per + ' traveller' + (per === 1 ? '' : 's'));
@@ -1074,13 +1213,15 @@
   }
 
   /* ---------------- form binding ---------------- */
+  // 'place' fields feed a geocoder, so they commit on blur / Enter rather than
+  // on every keystroke.
   var FIELDS = [
-    ['home', 'home', 'text'], ['dest', 'dest', 'text'],
+    ['home', 'home', 'place'], ['dest', 'dest', 'place'],
     ['tstart', 'start', 'text'], ['tend', 'end', 'text'],
     ['destn', 'destNights', 'num'], ['destrate', 'destRate', 'num'], ['maxh', 'maxDriveH', 'num'],
     ['travellers', 'travellers', 'num'], ['currency', 'currency', 'text'],
     ['l100', 'l100', 'num'], ['fuelprice', 'fuelPrice', 'num'],
-    ['portA', 'ferry.portA', 'text'], ['portB', 'ferry.portB', 'text'],
+    ['portA', 'ferry.portA', 'place'], ['portB', 'ferry.portB', 'place'],
     ['seah', 'ferry.seaH', 'num'], ['seahB', 'ferry.seaHB', 'num'], ['ci', 'ferry.ciH', 'num'],
     ['outdate', 'ferry.outDate', 'text'], ['outtime', 'ferry.outTime', 'text'],
     ['retdate', 'ferry.retDate', 'text'], ['rettime', 'ferry.retTime', 'text'],
@@ -1111,13 +1252,21 @@
 
   FIELDS.forEach(function (f) {
     var el = $(f[0]), t = null;
-    function commit() {
+    function store() {
       var v = el.value;
       setPath(T, f[1], f[2] === 'num' ? (v === '' ? 0 : Number(v)) : v);
-      saveDB(); refresh();
+      saveDB();
     }
-    el.addEventListener('input', function () { clearTimeout(t); t = setTimeout(commit, 400); });
+    function commit() { store(); refresh(); }
+    el.addEventListener('input', function () {
+      if (f[2] === 'place') { store(); return; }   // wait for blur / Enter to geocode
+      clearTimeout(t); t = setTimeout(commit, 400);
+    });
     el.addEventListener('change', function () { clearTimeout(t); commit(); });
+    // Enter should commit a place rather than sit there doing nothing.
+    if (f[2] === 'place') el.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+    });
   });
 
   $('tripname').addEventListener('input', function () {
@@ -1129,7 +1278,7 @@
   /* ---------------- events: stops ---------------- */
   function findStop(id) { return T.stops.filter(function (s) { return s.id === id; })[0]; }
 
-  $('steps').addEventListener('input', function (e) {
+  function stopEdit(e, committed) {
     var row = e.target.closest('.node');
     if (!row || !row.getAttribute('data-id')) return;
     var s = findStop(row.getAttribute('data-id')), f = e.target.getAttribute('data-f');
@@ -1138,12 +1287,23 @@
     else if (f === 'nights') s.nights = Number(e.target.value) || 0;
     else s[f] = e.target.value;
     saveDB();
+    if (f === 'side') { blurActive(); stale.steps = false; refresh(); return; }
+    // A place name is only worth geocoding once it is finished — routing every
+    // keystroke burns lookups and flashes "no route found" at half-typed towns.
+    // Notes change nothing that is computed.
+    if (f === 'name' && !committed) return;
+    if (f === 'notes') return;
     clearTimeout(window.__st);
-    window.__st = setTimeout(refresh, 420);
+    window.__st = setTimeout(refresh, committed ? 0 : 420);
+  }
+  $('steps').addEventListener('input', function (e) { stopEdit(e, false); });
+  $('steps').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.getAttribute('data-f') === 'name') { e.preventDefault(); e.target.blur(); }
   });
   $('steps').addEventListener('change', function (e) {
     var i = e.target.closest('input[data-a]');
-    if (i) { var km = Number(i.value) || 0; if (km > 0) manual(i.getAttribute('data-a'), i.getAttribute('data-b'), km); }
+    if (i) { var km = Number(i.value) || 0; if (km > 0) manual(i.getAttribute('data-a'), i.getAttribute('data-b'), km); return; }
+    stopEdit(e, true);
   });
   $('steps').addEventListener('click', function (e) {
     var row = e.target.closest('.node');
@@ -1152,41 +1312,46 @@
     if (!id) return;
     if (e.target.closest('[data-del]')) {
       T.stops = T.stops.filter(function (x) { return x.id !== id; });
-      saveDB(); refresh(); return;
+      blurActive(); stale.steps = false; saveDB(); refresh(); return;
     }
     var mv = e.target.closest('[data-mv]');
     if (mv) {
       var dir = mv.getAttribute('data-mv') === 'up' ? -1 : 1;
       var s = findStop(id);
-      var side = T.stops.filter(function (x) { return x.side === s.side; });
+      var side = stopsIn(s.side);
       var pos = side.indexOf(s), swap = side[pos + dir];
       if (!swap) return;
       var i1 = T.stops.indexOf(s), i2 = T.stops.indexOf(swap);
       T.stops[i1] = swap; T.stops[i2] = s;
-      saveDB(); refresh();
+      blurActive(); stale.steps = false; saveDB(); refresh();
     }
   });
-  $('addOut').addEventListener('click', function () {
-    T.stops.push({ id: uid(), name: '', side: 'out', nights: 1, rate: null, notes: '' });
-    saveDB(); refresh();
-  });
-  $('addBack').addEventListener('click', function () {
-    T.stops.push({ id: uid(), name: '', side: 'back', nights: 1, rate: null, notes: '' });
-    saveDB(); refresh();
+  $('addrow').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-addseg]');
+    if (!b) return;
+    T.stops.push({ id: uid(), name: '', side: b.getAttribute('data-addseg'), nights: 1, rate: null, notes: '' });
+    blurActive(); stale.steps = false; saveDB(); refresh();
+    // Put the caret straight in the new stop's name field.
+    var nodes = $('steps').querySelectorAll('.node[data-id] input[data-f="name"]');
+    if (nodes.length) nodes[nodes.length - 1].focus();
   });
 
   /* ---------------- events: itinerary ---------------- */
   $('days').addEventListener('click', function (e) {
     var add = e.target.closest('[data-add]');
     if (add) {
-      T.items.push({ id: uid(), date: add.getAttribute('data-add'), time: '', title: '', cat: 'activities', cost: null });
-      saveDB(); refresh(); return;
+      var fresh = { id: uid(), date: add.getAttribute('data-add'), time: '', title: '', cat: 'activities', cost: null };
+      T.items.push(fresh);
+      blurActive(); stale.days = false; saveDB(); refresh();
+      var el = $('days').querySelector('[data-item="' + fresh.id + '"] [data-f="title"]');
+      if (el) el.focus();
+      return;
     }
     var del = e.target.closest('[data-delitem]');
     if (del) {
       var id = del.getAttribute('data-delitem');
       T.items = T.items.filter(function (x) { return x.id !== id; });
-      saveDB(); refresh();
+      blurActive(); stale.days = false; saveDB(); refresh();
     }
   });
   function itemEdit(e) {
@@ -1233,7 +1398,7 @@
     if (!d) return;
     var id = d.getAttribute('data-delline');
     T.budget.lines = T.budget.lines.filter(function (x) { return x.id !== id; });
-    saveDB(); refresh();
+    blurActive(); stale.budgetbody = false; saveDB(); refresh();
   });
   $('addline').addEventListener('click', function () {
     var label = prompt('What is the line called?', 'New line');
