@@ -18,7 +18,11 @@ Reordering re-routes immediately, so you can see a better order pay for itself.
 
 **Crossings.** Optional ferry on any route. Give it a sailing date and time and it
 works backwards through the check-in window and the drive to the terminal to tell you
-what time to leave the house.
+what time to leave the house. A stop can sit on **either side of the crossing** —
+before it, after it, before sailing home, or after — and a dropdown moves a stop
+across the water. Overnight on the way to the terminal and the departure time walks
+back through that night too; if that pushes you before your stated start date, it
+says so and names the date.
 
 **Itinerary.** Every day of the trip laid out, with the driving and crossings filled
 in automatically and room to add your own items — a time, a title, a category and a
