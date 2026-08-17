@@ -292,3 +292,7 @@ dialog h3{margin:0 0 12px;font-size:15px}
   body{background:#fff}
   #schematic{display:block !important}
 }
+
+.check{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.check input{width:auto;flex:0 0 auto;margin-top:2px}
+.viaflag{color:var(--ferry);font-weight:700}

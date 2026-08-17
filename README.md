@@ -15,6 +15,8 @@ type is saved as you type it.
 in. Add stops, **reorder them with the arrows**, or **click the map** to drop a stop
 where you clicked. Each leg shows its km, its drive time and what the fuel costs.
 Reordering re-routes immediately, so you can see a better order pay for itself.
+**Keep the route in Canada** forces Maritimes↔Quebec legs through Edmundston, NB
+rather than across Maine — on a Montreal→North Sydney run that costs about 51 km.
 
 **Crossings.** Optional ferry on any route. Give it a sailing date and time and it
 works backwards through the check-in window and the drive to the terminal to tell you

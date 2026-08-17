@@ -61,7 +61,7 @@
       home: "Portugal Cove-St. Philip's, NL", dest: 'Montreal, QC',
       start: '2026-09-08', end: '2026-09-26', type: 'return',
       destNights: 8, destRate: 250, maxDriveH: 8,
-      travellers: 2, currency: '$', l100: 9.5, fuelPrice: 1.75,
+      travellers: 2, currency: '$', l100: 9.5, fuelPrice: 1.75, avoidUS: false,
       ferry: {
         portA: 'Port aux Basques, NL', portB: 'North Sydney, NS',
         seaH: 7, seaHB: 7, ciH: 2,
@@ -159,15 +159,42 @@
     n = String(n || '').trim();
     if (!n) return Promise.reject();
     if (GEO[n]) return Promise.resolve(GEO[n]);
-    return fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(n))
+    return fetch('https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=' + encodeURIComponent(n))
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j || !j.length) throw 0;
-        GEO[n] = { lat: +j[0].lat, lon: +j[0].lon };
+        var a = j[0].address || {};
+        GEO[n] = {
+          lat: +j[0].lat, lon: +j[0].lon,
+          cc: String(a.country_code || '').toLowerCase(),
+          region: a.state || a.province || '',
+          where: j[0].display_name || ''
+        };
         return GEO[n];
       });
   }
-  function lk(a, b) { return String(a).trim() + '||' + String(b).trim(); }
+  function lk(a, b) { return String(a).trim() + '||' + String(b).trim() + (T && T.avoidUS ? '||ca' : ''); }
+
+  /* Keeping a Maritimes↔Central-Canada leg out of Maine.
+     OSRM's public server cannot exclude a country, so instead we force the leg
+     through Edmundston, NB — the Trans-Canada crossing north of Maine. Applied only
+     when both ends are in Canada and the leg spans that corridor, which is the only
+     case where the short route leaves the country. */
+  var CA_VIA = { name: 'Edmundston, NB', lat: 47.3737, lon: -68.3251 };
+  function norm(s) {
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+  var ATLANTIC = ['new brunswick', 'nova scotia', 'prince edward island', 'newfoundland'];
+  var CENTRAL  = ['quebec', 'ontario', 'manitoba', 'saskatchewan', 'alberta', 'british columbia'];
+  function inList(region, list) {
+    var r = norm(region);
+    return list.some(function (x) { return r.indexOf(x) >= 0; });
+  }
+  function crossesMaine(ga, gb) {
+    if (!ga || !gb || ga.cc !== 'ca' || gb.cc !== 'ca') return false;
+    return (inList(ga.region, ATLANTIC) && inList(gb.region, CENTRAL)) ||
+           (inList(gb.region, ATLANTIC) && inList(ga.region, CENTRAL));
+  }
 
   function getLeg(a, b) {
     if (!a || !b || !String(a).trim() || !String(b).trim()) return null;
@@ -176,14 +203,20 @@
     LEG[k] = { state: 'pending' };
     enq(function () {
       return Promise.all([geocode(a), geocode(b)]).then(function (p) {
-        return fetch('https://router.project-osrm.org/route/v1/driving/' +
-          p[0].lon + ',' + p[0].lat + ';' + p[1].lon + ',' + p[1].lat + '?overview=full&geometries=geojson')
+        var via = (T.avoidUS && crossesMaine(p[0], p[1])) ? CA_VIA : null;
+        var pts = [p[0].lon + ',' + p[0].lat];
+        if (via) pts.push(via.lon + ',' + via.lat);
+        pts.push(p[1].lon + ',' + p[1].lat);
+        var usEnd = (p[0].cc === 'us' || p[1].cc === 'us');
+        return fetch('https://router.project-osrm.org/route/v1/driving/' + pts.join(';') +
+          '?overview=full&geometries=geojson')
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (!j.routes || !j.routes[0]) throw 0;
             LEG[k] = {
               state: 'ok', km: j.routes[0].distance / 1000, h: j.routes[0].duration / 3600,
-              geo: j.routes[0].geometry && j.routes[0].geometry.coordinates
+              geo: j.routes[0].geometry && j.routes[0].geometry.coordinates,
+              via: via ? via.name : null, usEnd: usEnd
             };
             setNet(true); refresh();
           });
@@ -577,7 +610,10 @@
     var cost = (l100 && fp) ? ' · <b>' + money(l.km / 100 * l100 * fp) + '</b> fuel' : '';
     return '<div class="leg"><span>🚗 <b>' + Math.round(l.km).toLocaleString() + ' km</b></span>' +
       '<span><b>' + hh(l.h) + '</b></span>' + (l.state === 'manual' ? '<span class="pend">yours</span>' : '') +
-      '<span>' + cost + '</span></div>';
+      '<span>' + cost + '</span>' +
+      (l.via ? '<span class="viaflag">via ' + esc(l.via) + '</span>' : '') +
+      (T.avoidUS && l.usEnd ? '<span class="fail">ends in the US</span>' : '') +
+      '</div>';
   }
 
   /* A re-render replaces these containers wholesale, which would yank the caret
@@ -834,11 +870,14 @@
   function renderChecks(M) {
     var m = [];
     if (M.tstart && M.tend && M.tend <= M.tstart) m.push('Trip end is before the start.');
-    var span = (M.tstart && M.tend) ? nd(M.tstart, M.tend) : 0;
-    var nights = M.destN;
-    activeStops().forEach(function (s) { nights += num(s.nights); });
+    var span = tripDays(M);
     var need = M.pending ? 0 : Math.ceil(M.totH / M.maxh);
-    var used = nights + need;
+    /* You arrive at a stop on a day you were already driving, so a night there is
+       not a separate day — only the nights *beyond* the arrival day add to the
+       trip length. Adding all the nights to all the driving days double-counts. */
+    var rest = Math.max(0, M.destN - 1);
+    activeStops().forEach(function (s) { rest += Math.max(0, num(s.nights) - 1); });
+    var used = need + rest;
     if (M.unrouted) m.push(M.unrouted + ' leg' + (M.unrouted === 1 ? '' : 's') +
       ' could not be routed — type the distance in, or check the spelling.');
     // Stops before the crossing push the departure earlier, which can land it
@@ -848,11 +887,13 @@
         '</b> — earlier than your start date. Move <b>Trip starts</b> back to ' + fmt(M.mustLeave) +
         ', or those days will not appear in the itinerary.');
     if (span && used > span)
-      m.push('Your stops and driving need about <b>' + used + '</b> days but the trip window is <b>' + span +
-        '</b> — trim a stop, or move the end date.');
+      m.push('This needs about <b>' + used + '</b> days — <b>' + need + '</b> driving at ' + M.maxh +
+        'h a day' + (rest ? ' plus <b>' + rest + '</b> not moving' : '') +
+        ' — but the window is <b>' + span + '</b> days. Trim a stay, drive longer days, or move the end date.');
     if (m.length) { $('checks').innerHTML = '<div class="warn">' + m.join('<br>') + '</div>'; return; }
     $('checks').innerHTML = '<div class="okline">' + (M.pending ? 'Looking up distances…' :
-      'About <b>' + used + '</b> days used of a <b>' + span + '</b>-day window — <b>' +
+      '<b>' + used + '</b> of <b>' + span + '</b> days accounted for — <b>' + need + '</b> driving' +
+      (rest ? ', <b>' + rest + '</b> not moving' : '') + ', <b>' +
       Math.max(0, span - used) + '</b> spare.') + '</div>';
   }
 
@@ -1244,6 +1285,7 @@
       $(f[0]).value = v == null ? '' : v;
     });
     $('tripname').value = T.name || '';
+    $('avoidus').checked = !!T.avoidUS;
     var opts = DB.trips.map(function (t) {
       return '<option value="' + esc(t.id) + '"' + (t.id === T.id ? ' selected' : '') + '>' + esc(t.name || 'Untitled') + '</option>';
     }).join('');
@@ -1267,6 +1309,11 @@
     if (f[2] === 'place') el.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
     });
+  });
+
+  $('avoidus').addEventListener('change', function () {
+    T.avoidUS = this.checked;
+    saveDB(); refresh();
   });
 
   $('tripname').addEventListener('input', function () {
